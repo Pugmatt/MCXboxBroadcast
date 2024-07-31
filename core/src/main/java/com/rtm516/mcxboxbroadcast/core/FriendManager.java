@@ -13,11 +13,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -210,6 +206,19 @@ public class FriendManager {
                         // Make sure we are not targeting a subaccount (eg: split screen)
                         if (isSubAccount(person.xuid)) {
                             continue;
+                        }
+
+                        // Auto remove any players that have not been seen for set time
+                        if (friendSyncConfig.autoRemove() && person.lastSeenDateTimeUtc != null) {
+                            Calendar cal = Calendar.getInstance();
+                            cal.add(Calendar.DATE, -friendSyncConfig.removeAfter());
+                            if (person.lastSeenDateTimeUtc.before(cal.getTime())) {
+                                if(person.isFollowedByCaller) { // Purge user
+                                    logger.info("Purging: " + person.displayName + " (" + person.xuid + ")");
+                                    remove(person.xuid, person.displayName);
+                                }
+                                continue;
+                            }
                         }
 
                         // Follow the person back
