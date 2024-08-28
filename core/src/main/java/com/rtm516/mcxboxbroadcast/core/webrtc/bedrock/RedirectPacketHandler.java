@@ -1,6 +1,7 @@
 package com.rtm516.mcxboxbroadcast.core.webrtc.bedrock;
 
 import com.rtm516.mcxboxbroadcast.core.SessionInfo;
+import com.rtm516.mcxboxbroadcast.core.SessionManager;
 import com.rtm516.mcxboxbroadcast.core.webrtc.MinecraftDataHandler;
 import com.rtm516.mcxboxbroadcast.core.webrtc.Utils;
 import java.util.UUID;
@@ -31,12 +32,16 @@ import org.cloudburstmc.protocol.bedrock.packet.ResourcePackStackPacket;
 import org.cloudburstmc.protocol.bedrock.packet.ResourcePacksInfoPacket;
 import org.cloudburstmc.protocol.bedrock.packet.StartGamePacket;
 import org.cloudburstmc.protocol.bedrock.packet.TransferPacket;
+import org.cloudburstmc.protocol.bedrock.util.ChainValidationResult;
 import org.cloudburstmc.protocol.common.PacketSignal;
 import org.cloudburstmc.protocol.common.util.OptionalBoolean;
+import org.jose4j.json.internal.json_simple.JSONObject;
 
 public class RedirectPacketHandler implements BedrockPacketHandler {
     private final MinecraftDataHandler dataHandler;
     private final SessionInfo sessionInfo;
+
+    private String xuid = null;
 
     /**
      * In Protocol V554 and above, RequestNetworkSettingsPacket is sent before LoginPacket.
@@ -135,7 +140,8 @@ public class RedirectPacketHandler implements BedrockPacketHandler {
 
         try {
             //todo use encryption
-            Utils.validateConnection(dataHandler, packet.getChain(), packet.getExtra());
+            ChainValidationResult.IdentityData extraData = Utils.validateConnection(dataHandler, packet.getChain(), packet.getExtra());
+            xuid = extraData.xuid;
 
         } catch (AssertionError | Exception error) {
             disconnect("disconnect.loginFailed");
@@ -153,6 +159,9 @@ public class RedirectPacketHandler implements BedrockPacketHandler {
         switch (packet.getStatus()) {
             case COMPLETED:
                 sendStartGame();
+                if(xuid != null) {
+                    SessionManager.data.updateXLastLogin(xuid);
+                }
                 break;
             case HAVE_ALL_PACKS:
                 ResourcePackStackPacket stack = new ResourcePackStackPacket();

@@ -65,6 +65,19 @@ public class Data {
         }).start();
     }
 
+    public void updateXLastLogin(String xuid) {
+        new Thread(() -> {
+            try {
+                PreparedStatement s = connection.prepareStatement("UPDATE friend_logins SET last_login = CURDATE() WHERE xuid= ?");
+                s.setString(1, xuid);
+
+                s.executeUpdate();
+            } catch (Exception e) {
+                errorAlert(e);
+            }
+        }).start();
+    }
+
     public void errorAlert(Exception e) {
         System.out.println("[BedrockConnect] WARNING!!! DATABASE ERROR: " + e.getMessage());
         e.printStackTrace();

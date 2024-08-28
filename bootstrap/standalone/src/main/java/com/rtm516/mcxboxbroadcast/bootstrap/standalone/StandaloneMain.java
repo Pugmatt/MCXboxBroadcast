@@ -24,9 +24,7 @@ import java.net.InetSocketAddress;
 import java.sql.Connection;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.ArrayList;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.*;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -76,7 +74,37 @@ public class StandaloneMain {
 
         logger.setDebug(config.debugLog());
 
-        MySQL MySQL = new MySQL("localhost", "bedrock-connect", "root", "", DatabaseTypes.mysql, false);
+        String hostname = "localhost";
+        String database = "bedrock-connect";
+        String username = "root";
+        String password = "";
+
+        HashMap<String, String> settings = new HashMap<>();
+
+        for(String str : args) {
+            if(str.indexOf("=") !=  -1 && str.indexOf("=") < str.length() - 1) {
+                settings.put(str.substring(0, str.indexOf("=")), str.substring(str.indexOf("=") + 1));
+            }
+        }
+
+        for (Map.Entry<String, String> setting : settings.entrySet()) {
+            switch (setting.getKey().toLowerCase()) {
+                case "db_host":
+                    hostname = setting.getValue();
+                    break;
+                case "db_db":
+                    database = setting.getValue();
+                    break;
+                case "db_user":
+                    username = setting.getValue();
+                    break;
+                case "db_pass":
+                    password = setting.getValue();
+                    break;
+            }
+        }
+
+        MySQL MySQL = new MySQL(hostname, database, username, password, DatabaseTypes.mysql, false);
 
         connection = MySQL.openConnection();
 
