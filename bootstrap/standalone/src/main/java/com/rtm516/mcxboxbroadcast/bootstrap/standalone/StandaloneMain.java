@@ -11,6 +11,9 @@ import com.rtm516.mcxboxbroadcast.core.exceptions.SessionUpdateException;
 import com.rtm516.mcxboxbroadcast.core.ping.PingUtil;
 import com.rtm516.mcxboxbroadcast.core.storage.FileStorageManager;
 import org.cloudburstmc.protocol.bedrock.BedrockPong;
+import com.rtm516.mcxboxbroadcast.core.sql.Data;
+import com.rtm516.mcxboxbroadcast.core.sql.DatabaseTypes;
+import com.rtm516.mcxboxbroadcast.core.sql.MySQL;
 import org.slf4j.LoggerFactory;
 
 import java.io.File;
@@ -18,6 +21,12 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Timer;
+import java.util.TimerTask;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 
@@ -27,6 +36,9 @@ public class StandaloneMain {
     private static SessionInfo sessionInfo;
 
     public static SessionManager sessionManager;
+
+    private static Connection connection;
+
 
     public static void main(String[] args) throws Exception {
         logger = new StandaloneLoggerImpl(LoggerFactory.getLogger(StandaloneMain.class));
@@ -63,6 +75,62 @@ public class StandaloneMain {
         }
 
         logger.setDebug(config.debugLog());
+
+        MySQL MySQL = new MySQL("localhost", "bedrock-connect", "root", "", DatabaseTypes.mysql, false);
+
+        connection = MySQL.openConnection();
+
+        SessionManager.data = new Data(connection);
+
+        // Keep MySQL connection alive
+        Timer timer = new Timer();
+        TimerTask task = new TimerTask() {
+            int sec;
+
+            public void run() {
+                try {
+                    if (connection == null || connection.isClosed()) {
+                        connection = MySQL.openConnection();
+                    } else {
+                        if (sec == 600) {
+                            try {
+                                ResultSet rs = connection
+                                        .createStatement()
+                                        .executeQuery(
+                                                "SELECT 1");
+                                rs.next();
+                            } catch (SQLException e) {
+                                // TODO Auto-generated
+                                // catch block
+                                e.printStackTrace();
+                            }
+                            sec = 0;
+                        }
+                    }
+                } catch (SQLException e) {
+                    // TODO Auto-generated catch block
+                    e.printStackTrace();
+                }
+                sec++;
+            }
+        };
+        timer.scheduleAtFixedRate(task, 0L, 60 * 1000);
+
+        ArrayList<String> activePlayers = new ArrayList<>();
+        try {
+            ResultSet rs = connection
+                    .createStatement()
+                    .executeQuery("select * from friend_logins WHERE last_login > NOW() - INTERVAL 1 WEEK;");
+            while (rs.next()) {
+                activePlayers.add(rs.getString("xuid"));
+            }
+        } catch(Exception e) {
+            activePlayers = null;
+            e.printStackTrace();
+            System.out.println("Error getting activePlayers. Won't run inactive purge this run.");
+        }
+
+        SessionManager.activePlayers = activePlayers;
 
         sessionManager = new SessionManager(new FileStorageManager("./cache"), logger);
 

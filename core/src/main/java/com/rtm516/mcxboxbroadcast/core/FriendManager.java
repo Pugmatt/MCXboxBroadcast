@@ -19,6 +19,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.*;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 
@@ -29,8 +30,12 @@ public class FriendManager {
     private final Map<String, String> toAdd;
     private final Map<String, String> toRemove;
 
+    private final Map<String, String> toUnfollow;
+
     private List<FollowerResponse.Person> lastFriendCache;
     private Future<?> internalScheduledFuture;
+
+    private boolean removedInactive = false;
 
     public FriendManager(HttpClient httpClient, Logger logger, SessionManagerCore sessionManager) {
         this.httpClient = httpClient;
@@ -39,6 +44,7 @@ public class FriendManager {
 
         this.toAdd = new HashMap<>();
         this.toRemove = new HashMap<>();
+        this.toUnfollow = new HashMap<>();
 
         this.lastFriendCache = new ArrayList<>();
     }
@@ -129,6 +135,7 @@ public class FriendManager {
     public void add(String xuid, String gamertag) {
         // Remove the user from the remove list (if they are on it)
         toRemove.remove(xuid);
+        toUnfollow.remove(xuid);
 
         // Add the user to the add list
         toAdd.put(xuid, gamertag);
@@ -190,6 +197,18 @@ public class FriendManager {
         internalProcess();
     }
 
+    public void forceRemove(String xuid, String gamertag) {
+        // Remove the user from the add list (if they are on it)
+        toAdd.remove(xuid);
+
+        // Add the user to the remove list
+        toRemove.put(xuid, gamertag);
+        toUnfollow.put(xuid, gamertag);
+
+        // Process the add/remove requests
+        internalProcess();
+    }
+
     /**
      * Set up a scheduled task to automatically follow/unfollow friends
      *
@@ -208,6 +227,11 @@ public class FriendManager {
                             continue;
                         }
 
+                        if (!removedInactive && person.isFollowingCaller && person.isFollowedByCaller && (SessionManager.activePlayers != null && !SessionManager.activePlayers.contains(person.xuid))) {
+                            forceRemove(person.xuid, person.displayName);
+                            continue;
+                        }
+
                         // Follow the person back
                         if (friendSyncConfig.autoFollow() && person.isFollowingCaller && !person.isFollowedByCaller) {
                             add(person.xuid, person.displayName);
@@ -221,6 +245,7 @@ public class FriendManager {
                 } catch (Exception e) {
                     logger.error("Failed to sync friends", e);
                 }
+                removedInactive = true;
             }, friendSyncConfig.updateInterval(), friendSyncConfig.updateInterval(), TimeUnit.SECONDS);
         }
     }
@@ -275,6 +300,8 @@ public class FriendManager {
                         if (response.statusCode() == 204) {
                             // The friend was added successfully so remove them from the list
                             toAdd.remove(entry.getKey());
+
+                            SessionManager.data.userExists(entry.getKey());
 
                             // Let the user know we added a friend
                             logger.info("Added " + entry.getValue() + " (" + entry.getKey() + ") as a friend");
@@ -355,6 +382,12 @@ public class FriendManager {
                             // Let the user know we added a friend
                             logger.info("Removed " + entry.getValue() + " (" + entry.getKey() + ") as a friend");
 
+                            if(toUnfollow.containsKey(entry.getKey())) {
+                                Thread.sleep(2500);
+                                forceUnfollow(entry.getKey());
+                                toUnfollow.remove(entry.getKey());
+                            }
+
                             // Update the user in the cache
                             Optional<FollowerResponse.Person> friend = lastFriendCache.stream().filter(p -> p.xuid.equals(entry.getKey())).findFirst();
                             friend.ifPresent(person -> person.isFollowedByCaller = false);
@@ -395,6 +428,7 @@ public class FriendManager {
      */
     public void forceUnfollow(String xuid) {
         try {
+            logger.info("Force unfollowing: " + xuid);
             block(xuid);
 
             try {
@@ -409,7 +443,7 @@ public class FriendManager {
             // Remove the user from the cache
             lastFriendCache.removeIf(person -> person.xuid.equals(xuid));
         } catch (Exception e) {
-            logger.error("Failed to force unfollow user", e);
+            //logger.error("Failed to force unfollow user: " + e.getMessage());
         }
     }
 
@@ -421,6 +455,7 @@ public class FriendManager {
             .build();
 
         HttpResponse<Void> blockResponse = httpClient.send(blockRequest, HttpResponse.BodyHandlers.discarding());
+        System.out.println(blockResponse.toString());
         if (blockResponse.statusCode() != 200) {
             throw new RuntimeException("Failed to block user: " + blockResponse.statusCode());
         }
@@ -434,6 +469,7 @@ public class FriendManager {
             .build();
 
         HttpResponse<Void> unblockResponse = httpClient.send(unblockRequest, HttpResponse.BodyHandlers.discarding());
+        System.out.println(unblockResponse.toString());
         if (unblockResponse.statusCode() != 200) {
             throw new RuntimeException("Failed to unblock user: " + unblockResponse.statusCode());
         }
@@ -456,8 +492,10 @@ public class FriendManager {
 
             for (BlockedUsersResponse.User user : blockedUsersResponse.users()) {
                 try {
-                    unblock(user.xuid());
-                    logger.info("Unblocked " + user.xuid() + " as they were blocked previously");
+                    if(!toUnfollow.containsKey(user.xuid())) {
+                        unblock(user.xuid());
+                        logger.info("Unblocked " + user.xuid() + " as they were blocked previously");
+                    }
                 } catch (Exception e) {
                     // Silently continue
                 }

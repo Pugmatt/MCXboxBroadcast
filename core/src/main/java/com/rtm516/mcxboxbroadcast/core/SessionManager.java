@@ -7,6 +7,7 @@ import com.rtm516.mcxboxbroadcast.core.exceptions.SessionUpdateException;
 import com.rtm516.mcxboxbroadcast.core.models.session.CreateSessionRequest;
 import com.rtm516.mcxboxbroadcast.core.models.session.CreateSessionResponse;
 import com.rtm516.mcxboxbroadcast.core.storage.StorageManager;
+import com.rtm516.mcxboxbroadcast.core.sql.Data;
 import org.java_websocket.util.NamedThreadFactory;
 
 import java.io.IOException;
@@ -30,6 +31,9 @@ public class SessionManager extends SessionManagerCore {
 
     private FriendSyncConfig friendSyncConfig;
     private Runnable restartCallback;
+
+    public static Data data;
+    public static ArrayList<String> activePlayers;
 
     /**
      * Create an instance of SessionManager

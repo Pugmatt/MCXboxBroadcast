@@ -34,6 +34,8 @@ gson = { group = "com.google.code.gson", name = "gson", version.ref = "gson"}
 java-websocket = { group = "org.java-websocket", name = "Java-WebSocket", version.ref = "java-websocket" }
 nimbus-jose-jwt = { group = "com.nimbusds", name = "nimbus-jose-jwt", version.ref = "nimbus-jose-jwt" }
 
+mysql = { group = "mysql", name = "mysql-connector-java", version = "8.0.33" }
+
 # Plugins
 shadow = { group = "com.gradleup.shadow", name = "shadow-gradle-plugin", version.ref = "shadow" }
 indra-git = { group = "net.kyori", name = "indra-git", version.ref = "indra" }
