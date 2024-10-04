@@ -1,3 +1,5 @@
+Modified MCXboxBroadcast to handle removing inactive users - Used in main BedrockConnect instance currently (Could probably be refactored for more wide-spread use; Had been coded quickly for use in BC)
+
 # MCXboxBroadcast
 [![License: GPL-3.0](https://img.shields.io/github/license/rtm516/MCXboxBroadcast)](LICENSE)
 [![Build Release](https://github.com/rtm516/MCXboxBroadcast/actions/workflows/release.yml/badge.svg)](https://github.com/rtm516/MCXboxBroadcast/releases)
