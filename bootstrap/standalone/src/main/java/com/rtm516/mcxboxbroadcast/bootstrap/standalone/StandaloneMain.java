@@ -5,6 +5,8 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.rtm516.mcxboxbroadcast.core.BuildData;
 import com.rtm516.mcxboxbroadcast.core.SessionInfo;
 import com.rtm516.mcxboxbroadcast.core.SessionManager;
+import com.rtm516.mcxboxbroadcast.core.notifications.NotificationManager;
+import com.rtm516.mcxboxbroadcast.core.notifications.SlackNotificationManager;
 import com.rtm516.mcxboxbroadcast.core.configs.StandaloneConfig;
 import com.rtm516.mcxboxbroadcast.core.exceptions.SessionCreationException;
 import com.rtm516.mcxboxbroadcast.core.exceptions.SessionUpdateException;
@@ -32,6 +34,7 @@ public class StandaloneMain {
     private static StandaloneConfig config;
     private static StandaloneLoggerImpl logger;
     private static SessionInfo sessionInfo;
+    private static NotificationManager notificationManager;
 
     public static SessionManager sessionManager;
 
@@ -160,7 +163,10 @@ public class StandaloneMain {
 
         SessionManager.activePlayers = activePlayers;
 
-        sessionManager = new SessionManager(new FileStorageManager("./cache"), logger);
+        // TODO Support multiple notification types
+        notificationManager = new SlackNotificationManager(logger, config.slackWebhook());
+
+        sessionManager = new SessionManager(new FileStorageManager("./cache"), notificationManager, logger);
 
         sessionInfo = config.session().sessionInfo();
 
@@ -178,7 +184,8 @@ public class StandaloneMain {
         try {
             sessionManager.shutdown();
 
-            sessionManager = new SessionManager(new FileStorageManager("./cache"), logger);
+            // Create a new session manager, but reuse the notification manager as config hasn't been reloaded
+            sessionManager = new SessionManager(new FileStorageManager("./cache"), notificationManager, logger);
 
             createSession();
         } catch (SessionCreationException | SessionUpdateException e) {

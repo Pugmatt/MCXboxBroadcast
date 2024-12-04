@@ -3,11 +3,13 @@ package com.rtm516.mcxboxbroadcast.core;
 import com.google.gson.JsonParseException;
 import com.rtm516.mcxboxbroadcast.core.configs.FriendSyncConfig;
 import com.rtm516.mcxboxbroadcast.core.exceptions.XboxFriendsException;
-import com.rtm516.mcxboxbroadcast.core.models.friend.BlockRequest;
-import com.rtm516.mcxboxbroadcast.core.models.friend.BlockedUsersResponse;
 import com.rtm516.mcxboxbroadcast.core.models.friend.FriendModifyResponse;
+import com.rtm516.mcxboxbroadcast.core.models.friend.FriendRequestAcceptResponse;
+import com.rtm516.mcxboxbroadcast.core.models.friend.FriendRequestResponse;
 import com.rtm516.mcxboxbroadcast.core.models.friend.FriendStatusResponse;
+import com.rtm516.mcxboxbroadcast.core.models.session.CreateHandleRequest;
 import com.rtm516.mcxboxbroadcast.core.models.session.FollowerResponse;
+import com.rtm516.mcxboxbroadcast.core.models.session.SessionRef;
 
 import java.io.IOException;
 import java.net.URI;
@@ -22,6 +24,7 @@ import java.util.Optional;
 import java.util.*;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 public class FriendManager {
     private final HttpClient httpClient;
@@ -34,6 +37,7 @@ public class FriendManager {
 
     private List<FollowerResponse.Person> lastFriendCache;
     private Future<?> internalScheduledFuture;
+    private boolean initialInvite;
 
     private boolean removedInactive = false;
 
@@ -121,7 +125,7 @@ public class FriendManager {
             }
         }
 
-        List<FollowerResponse.Person> outPeopleList = outPeople.values().stream().toList();
+        List<FollowerResponse.Person> outPeopleList = new ArrayList<>(outPeople.values());
         lastFriendCache = outPeopleList;
         return outPeopleList;
     }
@@ -215,15 +219,13 @@ public class FriendManager {
      * @param friendSyncConfig The config to use for the auto friend sync
      */
     public void initAutoFriend(FriendSyncConfig friendSyncConfig) {
+        this.initialInvite = friendSyncConfig.initialInvite();
         if (friendSyncConfig.autoFollow() || friendSyncConfig.autoUnfollow()) {
             sessionManager.scheduledThread().scheduleWithFixedDelay(() -> {
-                // Cleanup any blocked users
-                cleanupBlocked();
-
                 try {
                     for (FollowerResponse.Person person : get()) {
                         // Make sure we are not targeting a subaccount (eg: split screen)
-                        if (isSubAccount(person.xuid)) {
+                        if (isGuestAccount(person.xuid)) {
                             continue;
                         }
 
@@ -251,20 +253,20 @@ public class FriendManager {
     }
 
     /**
-     * Internal function to check if the XUID is a subaccount (used by split screen)
+     * Internal function to check if the XUID is a guest account (used by split screen)
      *
-     * @return True if the XUID is a sub account
+     * @return True if the XUID is a guest account
      */
-    private boolean isSubAccount(long xuid) {
+    private boolean isGuestAccount(long xuid) {
         return xuid >> 52 == 1;
     }
 
     /**
-     * @see #isSubAccount(long)
+     * @see #isGuestAccount(long)
      */
-    private boolean isSubAccount(String xuid) {
+    private boolean isGuestAccount(String xuid) {
         try {
-            return isSubAccount(Long.parseLong(xuid));
+            return isGuestAccount(Long.parseLong(xuid));
         } catch (NumberFormatException e) {
             return false;
         }
@@ -305,6 +307,7 @@ public class FriendManager {
 
                             // Let the user know we added a friend
                             logger.info("Added " + entry.getValue() + " (" + entry.getKey() + ") as a friend");
+                            sendInvite(entry.getKey());
 
                             // Update the user in the cache
                             Optional<FollowerResponse.Person> friend = lastFriendCache.stream().filter(p -> p.xuid.equals(entry.getKey())).findFirst();
@@ -349,6 +352,7 @@ public class FriendManager {
                                 forceUnfollow(entry.getKey());
 
                                 logger.warn("Removed " + entry.getValue() + " (" + entry.getKey() + ") as a friend due to restrictions on their account");
+                                sessionManager.notificationManager().sendFriendRestrictionNotification(entry.getValue(), entry.getKey());
                             } else {
                                 logger.warn("Failed to add " + entry.getValue() + " (" + entry.getKey() + ") as a friend: (" + response.statusCode() + ") " + response.body());
                             }
@@ -379,7 +383,7 @@ public class FriendManager {
                             // The friend was removed successfully so remove them from the list
                             toRemove.remove(entry.getKey());
 
-                            // Let the user know we added a friend
+                            // Let the user know we removed a friend
                             logger.info("Removed " + entry.getValue() + " (" + entry.getKey() + ") as a friend");
 
                             if(toUnfollow.containsKey(entry.getKey())) {
@@ -429,79 +433,21 @@ public class FriendManager {
     public void forceUnfollow(String xuid) {
         try {
             logger.info("Force unfollowing: " + xuid);
-            block(xuid);
+            HttpRequest followerDeleteRequest = HttpRequest.newBuilder()
+                .uri(URI.create(Constants.FOLLOWER.formatted(xuid)))
+                .header("Authorization", sessionManager.getTokenHeader())
+                .DELETE()
+                .build();
 
-            try {
-                // Wait 2.5s else the unblock request will not get processed
-                Thread.sleep(2500);
-            } catch (InterruptedException e) {
-                logger.warn("Failed to wait to unblock user, this may cause issues (" + xuid + "): " + e.getMessage());
+            HttpResponse<String> response = httpClient.send(followerDeleteRequest, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() == 204) {
+                // Remove the user from the cache
+                lastFriendCache.removeIf(person -> person.xuid.equals(xuid));
+            } else {
+                throw new RuntimeException(response.statusCode() + ": " + response.body());
             }
-
-            unblock(xuid);
-
-            // Remove the user from the cache
-            lastFriendCache.removeIf(person -> person.xuid.equals(xuid));
         } catch (Exception e) {
             //logger.error("Failed to force unfollow user: " + e.getMessage());
-        }
-    }
-
-    private void block(String xuid) throws IOException, InterruptedException, RuntimeException {
-        HttpRequest blockRequest = HttpRequest.newBuilder()
-            .uri(Constants.BLOCK)
-            .header("Authorization", sessionManager.getTokenHeader())
-            .PUT(HttpRequest.BodyPublishers.ofString(Constants.GSON.toJson(new BlockRequest(xuid))))
-            .build();
-
-        HttpResponse<Void> blockResponse = httpClient.send(blockRequest, HttpResponse.BodyHandlers.discarding());
-        System.out.println(blockResponse.toString());
-        if (blockResponse.statusCode() != 200) {
-            throw new RuntimeException("Failed to block user: " + blockResponse.statusCode());
-        }
-    }
-
-    private void unblock(String xuid) throws IOException, InterruptedException, RuntimeException {
-        HttpRequest unblockRequest = HttpRequest.newBuilder()
-            .uri(Constants.BLOCK)
-            .header("Authorization", sessionManager.getTokenHeader())
-            .method("DELETE", HttpRequest.BodyPublishers.ofString(Constants.GSON.toJson(new BlockRequest(xuid))))
-            .build();
-
-        HttpResponse<Void> unblockResponse = httpClient.send(unblockRequest, HttpResponse.BodyHandlers.discarding());
-        System.out.println(unblockResponse.toString());
-        if (unblockResponse.statusCode() != 200) {
-            throw new RuntimeException("Failed to unblock user: " + unblockResponse.statusCode());
-        }
-    }
-
-    /**
-     * Cleanup any blocked users
-     *
-     * This is due to xbox taking time to process block requests and sometimes we are too early to unblock
-     */
-    private void cleanupBlocked() {
-        try {
-            HttpRequest blockedUsers = HttpRequest.newBuilder()
-                .uri(Constants.BLOCK)
-                .header("Authorization", sessionManager.getTokenHeader())
-                .GET()
-                .build();
-            HttpResponse<String> response = httpClient.send(blockedUsers, HttpResponse.BodyHandlers.ofString());
-            BlockedUsersResponse blockedUsersResponse = Constants.GSON.fromJson(response.body(), BlockedUsersResponse.class);
-
-            for (BlockedUsersResponse.User user : blockedUsersResponse.users()) {
-                try {
-                    if(!toUnfollow.containsKey(user.xuid())) {
-                        unblock(user.xuid());
-                        logger.info("Unblocked " + user.xuid() + " as they were blocked previously");
-                    }
-                } catch (Exception e) {
-                    // Silently continue
-                }
-            }
-        } catch (IOException | InterruptedException e) {
-            // Silently fail as it's not too important if this doesn't work
         }
     }
 
@@ -513,5 +459,89 @@ public class FriendManager {
      */
     public List<FollowerResponse.Person> lastFriendCache() {
         return lastFriendCache;
+    }
+
+    public void acceptPendingFriendRequests() {
+        try {
+            // Get the pending friend requests
+            HttpRequest friendRequests = HttpRequest.newBuilder()
+                .uri(URI.create("https://peoplehub.xboxlive.com/users/me/people/friendrequests(received)"))
+                .header("Authorization", sessionManager.getTokenHeader())
+                .header("x-xbl-contract-version", "7")
+                .header("accept-language", "en-GB")
+                .GET()
+                .build();
+
+            // Parse and extract the xuids
+            HttpResponse<String> response = httpClient.send(friendRequests, HttpResponse.BodyHandlers.ofString());
+            FriendRequestResponse friendRequestResponse = Constants.GSON.fromJson(response.body(), FriendRequestResponse.class);
+            List<String> xuids = friendRequestResponse.people.stream().map(person -> person.xuid).collect(Collectors.toUnmodifiableList());
+
+            // Don't try and accept if there are no requests
+            if (xuids.isEmpty()) {
+                return;
+            }
+
+            // Accept the friend requests
+            HttpRequest acceptRequests = HttpRequest.newBuilder()
+                .uri(URI.create("https://social.xboxlive.com/bulk/users/me/people/friends/v2?method=add"))
+                .header("Authorization", sessionManager.getTokenHeader())
+                .POST(HttpRequest.BodyPublishers.ofString(Constants.GSON.toJson(Map.of("xuids", xuids))))
+                .build();
+
+            // Parse the response
+            HttpResponse<String> acceptResponse = httpClient.send(acceptRequests, HttpResponse.BodyHandlers.ofString());
+            FriendRequestAcceptResponse friendRequestAcceptResponse = Constants.GSON.fromJson(acceptResponse.body(), FriendRequestAcceptResponse.class);
+
+            // Let the user know we accepted the friend requests
+            for (String xuid : friendRequestAcceptResponse.updatedPeople) {
+                Optional<FollowerResponse.Person> friend = friendRequestResponse.people.stream().filter(p -> p.xuid.equals(xuid)).findFirst();
+                if (friend.isEmpty()) {
+                    continue;
+                }
+                logger.info("Added " + friend.get().gamertag + " (" + xuid + ") as a friend");
+                sendInvite(xuid);
+            }
+        } catch (IOException | InterruptedException e) {
+            logger.error("Failed to accept friend requests", e);
+        }
+    }
+
+    /**
+     * Send an invite to a given xuid for the current game session
+     *
+     * @param xuid The XUID of the user to invite
+     */
+    public void sendInvite(String xuid) {
+        // Only invite if enabled
+        if (!initialInvite) {
+            return;
+        }
+
+        try {
+            CreateHandleRequest createHandleContent = new CreateHandleRequest(
+                1,
+                "invite",
+                new SessionRef(
+                    Constants.SERVICE_CONFIG_ID,
+                    Constants.TEMPLATE_NAME,
+                    sessionManager.getSessionId()
+                ),
+                xuid,
+                Map.of("titleId", Constants.TITLE_ID) // Minecraft Windows title Id
+            );
+
+            HttpRequest sendInvite = HttpRequest.newBuilder()
+                .uri(Constants.CREATE_HANDLE)
+                .header("Authorization", sessionManager.getTokenHeader())
+                .header("x-xbl-contract-version", "107")
+                .POST(HttpRequest.BodyPublishers.ofString(Constants.GSON.toJson(createHandleContent)))
+                .build();
+
+            HttpResponse<String> inviteResponse = httpClient.send(sendInvite, HttpResponse.BodyHandlers.ofString());
+            logger.debug(inviteResponse.body());
+        } catch (IOException | InterruptedException e) {
+            logger.error("Failed to send invite to " + xuid + ": " + e.getMessage());
+        }
     }
 }

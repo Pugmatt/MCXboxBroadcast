@@ -12,6 +12,7 @@ import com.rtm516.mcxboxbroadcast.core.models.session.CreateHandleResponse;
 import com.rtm516.mcxboxbroadcast.core.models.session.SessionRef;
 import com.rtm516.mcxboxbroadcast.core.models.session.SocialSummaryResponse;
 import com.rtm516.mcxboxbroadcast.core.models.auth.XboxTokenInfo;
+import com.rtm516.mcxboxbroadcast.core.notifications.NotificationManager;
 import com.rtm516.mcxboxbroadcast.core.storage.StorageManager;
 
 import com.rtm516.mcxboxbroadcast.core.webrtc.RtcWebsocketClient;
@@ -40,6 +41,7 @@ public abstract class SessionManagerCore {
     protected final Logger logger;
     protected final Logger coreLogger;
     protected final StorageManager storageManager;
+    protected final NotificationManager notificationManager;
 
     protected RtaWebsocketClient rtaWebsocket;
     protected ExpandedSessionInfo sessionInfo;
@@ -52,9 +54,10 @@ public abstract class SessionManagerCore {
      * Create an instance of SessionManager
      *
      * @param storageManager The storage manager to use for storing data
+     * @param notificationManager The notification manager to use for sending messages
      * @param logger The logger to use for outputting messages
      */
-    public SessionManagerCore(StorageManager storageManager, Logger logger) {
+    public SessionManagerCore(StorageManager storageManager, NotificationManager notificationManager, Logger logger) {
         this.httpClient = Methanol.newBuilder()
             .version(HttpClient.Version.HTTP_1_1)
             .followRedirects(HttpClient.Redirect.NORMAL)
@@ -64,8 +67,9 @@ public abstract class SessionManagerCore {
         this.logger = logger;
         this.coreLogger = logger.prefixed("");
         this.storageManager = storageManager;
+        this.notificationManager = notificationManager;
 
-        this.authManager = new AuthManager(storageManager, logger);
+        this.authManager = new AuthManager(notificationManager, storageManager, logger);
 
         this.friendManager = new FriendManager(httpClient, logger, this);
 
@@ -80,6 +84,15 @@ public abstract class SessionManagerCore {
      */
     public FriendManager friendManager() {
         return friendManager;
+    }
+
+    /**
+     * Get the notification manager for this session manager
+     *
+     * @return The notification manager
+     */
+    public NotificationManager notificationManager() {
+        return notificationManager;
     }
 
     /**
@@ -183,7 +196,7 @@ public abstract class SessionManagerCore {
             String authorizationHeader = setupSession();
 
             // Create the RTA websocket connection
-            setupRtaWebsocket(token);
+            setupRtaWebsocket();
 
             try {
                 // Wait and get the connection ID from the websocket
@@ -214,7 +227,7 @@ public abstract class SessionManagerCore {
             "activity",
             new SessionRef(
                 Constants.SERVICE_CONFIG_ID,
-                "MinecraftLobby",
+                Constants.TEMPLATE_NAME,
                 getSessionId()
             )
         );
@@ -382,14 +395,12 @@ public abstract class SessionManagerCore {
 
     /**
      * Setup the RTA websocket connection
-     *
-     * @param token The authentication token to use
      */
-    protected void setupRtaWebsocket(String token) {
+    protected void setupRtaWebsocket() {
         if (rtaWebsocket != null) {
             rtaWebsocket.close();
         }
-        rtaWebsocket = new RtaWebsocketClient(token, logger);
+        rtaWebsocket = new RtaWebsocketClient(this);
         rtaWebsocket.connect();
     }
 
@@ -492,5 +503,14 @@ public abstract class SessionManagerCore {
         } catch (IOException | InterruptedException e) {
             logger.error("Failed to check profile settings", e);
         }
+    }
+
+    /**
+     * Get the XUID of the current user
+     *
+     * @return The XUID of the current user
+     */
+    public String userXUID() {
+        return getXboxToken().userXUID();
     }
 }

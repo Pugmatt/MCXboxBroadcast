@@ -3,7 +3,7 @@ package com.rtm516.mcxboxbroadcast.core;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import org.cloudburstmc.protocol.bedrock.codec.BedrockCodec;
-import org.cloudburstmc.protocol.bedrock.codec.v748.Bedrock_v748;
+import org.cloudburstmc.protocol.bedrock.codec.v766.Bedrock_v766;
 
 import java.net.URI;
 import java.time.Instant;
@@ -23,7 +23,9 @@ public class Constants {
         .create();
 
     public static final String SERVICE_CONFIG_ID = "4fc10100-5f7a-4470-899b-280835760c07"; // The service config ID for Minecraft
-    public static final String CREATE_SESSION = "https://sessiondirectory.xboxlive.com/serviceconfigs/" + SERVICE_CONFIG_ID + "/sessionTemplates/MinecraftLobby/sessions/%s";
+    public static final String TEMPLATE_NAME = "MinecraftLobby";
+    public static final String TITLE_ID = "896928775"; // The title ID for Minecraft Windows Edition
+    public static final String CREATE_SESSION = "https://sessiondirectory.xboxlive.com/serviceconfigs/" + SERVICE_CONFIG_ID + "/sessionTemplates/" + TEMPLATE_NAME + "/sessions/%s";
     public static final String JOIN_SESSION = "https://sessiondirectory.xboxlive.com/handles/%s/session";
 
     public static final String PLAYFAB_LOGIN = "https://20ca2.playfabapi.com/Client/LoginWithXbox";
@@ -38,7 +40,7 @@ public class Constants {
     public static final URI FOLLOWERS = URI.create("https://peoplehub.xboxlive.com/users/me/people/followers");
     public static final URI SOCIAL = URI.create("https://peoplehub.xboxlive.com/users/me/people/social");
     public static final URI SOCIAL_SUMMARY = URI.create("https://social.xboxlive.com/users/me/summary");
-    public static final URI BLOCK = URI.create("https://privacy.xboxlive.com/users/me/people/never");
+    public static final String FOLLOWER = "https://social.xboxlive.com/users/me/people/follower/xuid(%s)";
     public static final String PROFILE_SETTINGS = "https://profile.xboxlive.com/users/xuid(%s)/profile/settings?settings=Gamertag";
 
     /**
@@ -54,5 +56,5 @@ public class Constants {
     /**
      * Used for the micro nethernet server that trasnfers the client to the real server
      */
-    public static final BedrockCodec BEDROCK_CODEC = Bedrock_v748.CODEC;
+    public static final BedrockCodec BEDROCK_CODEC = Bedrock_v766.CODEC;
 }
