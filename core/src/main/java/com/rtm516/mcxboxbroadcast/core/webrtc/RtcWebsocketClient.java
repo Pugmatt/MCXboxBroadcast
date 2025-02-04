@@ -17,6 +17,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -45,6 +46,7 @@ public class RtcWebsocketClient extends WebSocketClient {
     private final List<CandidateHarvester> candidateHarvesters;
 
     private ScheduledFuture<?> heartbeatFuture;
+    private CompletableFuture<Void> onOpenFuture = new CompletableFuture<>();
 
     /**
      * Create a new websocket and add the Authorization header
@@ -55,7 +57,7 @@ public class RtcWebsocketClient extends WebSocketClient {
      * @param scheduledExecutorService The executor service to use for scheduling tasks
      */
     public RtcWebsocketClient(String authenticationToken, ExpandedSessionInfo sessionInfo, Logger logger, ScheduledExecutorService scheduledExecutorService) {
-        super(URI.create(Constants.RTC_WEBSOCKET_FORMAT.formatted(sessionInfo.getWebrtcNetworkId())));
+        super(URI.create(Constants.RTC_WEBSOCKET_FORMAT.formatted(sessionInfo.getNetherNetId())));
         addHeader("Authorization", authenticationToken);
         // both seem random
         addHeader("Session-Id", UUID.randomUUID().toString());
@@ -67,6 +69,10 @@ public class RtcWebsocketClient extends WebSocketClient {
 
         this.activeSessions = new HashMap<>();
         this.candidateHarvesters = new ArrayList<>();
+    }
+
+    public CompletableFuture<Void> onOpenFuture() {
+        return onOpenFuture;
     }
 
     /**
@@ -82,6 +88,7 @@ public class RtcWebsocketClient extends WebSocketClient {
         heartbeatFuture = scheduledExecutorService.scheduleWithFixedDelay(() -> {
             send(Constants.GSON.toJson(new WsToMessage(0, null, null)));
         }, 40, 40, TimeUnit.SECONDS);
+        onOpenFuture.complete(null);
     }
 
     /**
