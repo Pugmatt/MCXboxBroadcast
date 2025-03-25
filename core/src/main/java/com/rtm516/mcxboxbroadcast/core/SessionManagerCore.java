@@ -16,12 +16,14 @@ import com.rtm516.mcxboxbroadcast.core.notifications.NotificationManager;
 import com.rtm516.mcxboxbroadcast.core.storage.StorageManager;
 import com.rtm516.mcxboxbroadcast.core.webrtc.RtcWebsocketClient;
 
+import java.io.File;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.util.UUID;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledExecutorService;
@@ -38,6 +40,7 @@ public abstract class SessionManagerCore {
     protected final Logger coreLogger;
     protected final StorageManager storageManager;
     protected final NotificationManager notificationManager;
+    private final GalleryManager galleryManager;
 
     protected RtaWebsocketClient rtaWebsocket;
     protected ExpandedSessionInfo sessionInfo;
@@ -45,6 +48,7 @@ public abstract class SessionManagerCore {
 
     protected boolean initialized = false;
     private RtcWebsocketClient rtcWebsocket;
+    private String mcToken;
 
     /**
      * Create an instance of SessionManager
@@ -69,6 +73,8 @@ public abstract class SessionManagerCore {
 
         this.friendManager = new FriendManager(httpClient, logger, this);
 
+        this.galleryManager = new GalleryManager(httpClient, logger, this);
+
         // Load the ICE configuration
         CustomIceConfigSource.install(logger);
     }
@@ -89,6 +95,15 @@ public abstract class SessionManagerCore {
      */
     public NotificationManager notificationManager() {
         return notificationManager;
+    }
+
+    /**
+     * Get the gallery manager for this session manager
+     *
+     * @return The gallery manager
+     */
+    public GalleryManager galleryManager() {
+        return galleryManager;
     }
 
     /**
@@ -189,7 +204,7 @@ public abstract class SessionManagerCore {
             // Update the current session XUID
             this.sessionInfo.setXuid(tokenInfo.userXUID());
 
-            String authorizationHeader = setupSession();
+            mcToken = setupSession(this.sessionInfo.getDeviceId());
 
             // Create the RTA websocket connection
             setupRtaWebsocket();
@@ -204,13 +219,24 @@ public abstract class SessionManagerCore {
                 throw new SessionCreationException("Unable to get connectionId for session: " + e.getMessage());
             }
 
-            setupRtcWebsocket(authorizationHeader);
+            setupRtcWebsocket(mcToken);
 
             try {
                 // Wait for the RTC websocket to connect
                 waitForRTCConnection().get();
             } catch (InterruptedException | ExecutionException e) {
                 throw new SessionCreationException("Unable to connect to WebRTC for session: " + e.getMessage());
+            }
+        } else {
+            mcToken = setupSession(UUID.randomUUID().toString());
+        }
+
+        // Set the showcase image to the current screenshot
+        File imageFile = storageManager.screenshot();
+        if (imageFile.exists()) {
+            logger.info("Setting showcase image");
+            if (galleryManager.setShowcase(imageFile)) {
+                logger.info("Successfully set showcase image");
             }
         }
 
@@ -345,12 +371,12 @@ public abstract class SessionManagerCore {
         return this.rtcWebsocket.onOpenFuture();
     }
 
-    protected String setupSession() {
+    protected String setupSession(String deviceId) {
         String playfabTicket = this.authManager.getPlayfabSessionTicket();
 
         HttpRequest request = HttpRequest.newBuilder(Constants.START_SESSION)
                 .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(SessionStartBody.create(sessionInfo.getDeviceId(), playfabTicket)))
+                .POST(HttpRequest.BodyPublishers.ofString(SessionStartBody.create(deviceId, playfabTicket)))
                 .build();
 
         HttpResponse<String> response;
@@ -461,20 +487,27 @@ public abstract class SessionManagerCore {
      */
     private void checkGamertagUpdate(XboxTokenInfo tokenInfo) {
         try {
-            ProfileSettingsResponse response = Constants.GSON.fromJson(httpClient.send(HttpRequest.newBuilder()
+            HttpResponse<String> response = httpClient.send(HttpRequest.newBuilder()
                 .uri(URI.create(Constants.PROFILE_SETTINGS.formatted(tokenInfo.userXUID())))
                 .header("Content-Type", "application/json")
                 .header("Authorization", tokenInfo.tokenHeader())
                 .header("x-xbl-contract-version", "3")
                 .GET()
-                .build(), HttpResponse.BodyHandlers.ofString()).body(), ProfileSettingsResponse.class);
+                .build(), HttpResponse.BodyHandlers.ofString());
 
-            String newGamertag = response.profileUsers().get(0).settings().get(0).value();
+            ProfileSettingsResponse profileSettingsResponse = Constants.GSON.fromJson(response.body(), ProfileSettingsResponse.class);
+
+            if (profileSettingsResponse == null) {
+                logger.error("Unable to get profile settings (" + response.statusCode() + "): " + response.body());
+                return;
+            }
+
+            String newGamertag = profileSettingsResponse.profileUsers().get(0).settings().get(0).value();
             if (!newGamertag.equals(tokenInfo.gamertag())) {
                 logger.info("Gamertag changed from " + tokenInfo.gamertag() + " to " + newGamertag);
                 authManager.updateGamertag(newGamertag);
             }
-        } catch (IOException | InterruptedException e) {
+        } catch (IOException | InterruptedException | NullPointerException e) {
             logger.error("Failed to check profile settings", e);
         }
     }
@@ -486,5 +519,14 @@ public abstract class SessionManagerCore {
      */
     public String userXUID() {
         return getXboxToken().userXUID();
+    }
+
+    /**
+     * Get the current MC token for the session
+     *
+     * @return The current MC token
+     */
+    public String getMCTokenHeader() {
+        return mcToken;
     }
 }
